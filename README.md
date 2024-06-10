@@ -12,28 +12,34 @@ This is a python script that can be executed in Windows to convert your MBOX fil
 
   To run timer on your device, follow these steps:
 
-  1. Ensure you have the latest Python installed. If not, refer to the official Python
+  1. set-up and open Outlook. 
+
+  2. Ensure you have the latest Python installed. If not, refer to the official Python
      documentation or installation instructions.
 
-  2. Install pywin32 using the following command in the terminal :
+  3. Install pywin32 using the following command in the terminal :
 
     pip install pywin32
     
-  3. Clone this repository to your local machine using the following command:
+  4. Clone this repository to your local machine using the following command:
 
    ```bash
    https://github.com/BloodBlinker/MBOX_To_PST.git
    ```
 
-  4. Change into the project directory:
+  5. Change into the project directory:
   
     cd MBOX_To_PST
     
-  5. Move the mbox file which you want to convert in to this directory
+  6. Move the mbox file which you want to convert in to this directory
 
-  6. Run the following command in the terminal to bgin the conversion :
+  7. Run the following command in the terminal to bgin the conversion :
 
     python MBOX_to_PST_Converter.py mbox_filename.mbox
   
   
-### Thank you for using Downloading
+
+After successful completion,copy/move the pst output to any other place, and if you want to run the script again using the same Outlook account, follow these steps: Go to Outlook, navigate to `File > Account Settings > Account Settings`, and then under the `Data Files` tab, remove the last created PST file.
+
+
+### Thank you for Using

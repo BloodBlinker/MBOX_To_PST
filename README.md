@@ -59,7 +59,7 @@ Follow these steps to set up and use the MBOX to PST Converter on your Windows m
 
 ## Important Notes
 
-- **Original Code Preservation**: The original version of the converter is preserved in this repository as `original_convert.py` for reference and testing purposes. The new, improved version is available in the `convert.py` file.
+- **Original Code Preservation**: The original version of the converter is preserved in this repository as `original_convert.py` for reference and testing purposes. The new, improved version is available in the `mbox_to_pst_convert.py` file.
 - **Testing the New Version**: We recommend testing the new version with a sample MBOX file before removing the original code.
 - **International Clients**: This tool is designed to be user-friendly for clients worldwide, with clear instructions and support for various email formats.
 

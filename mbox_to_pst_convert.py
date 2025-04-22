@@ -3,289 +3,260 @@ import mailbox
 import os
 import email
 import win32com.client
-from win32com.client import constants
-import tempfile
-import logging
-import re
-import argparse
 import shutil
-import pywintypes
-import charset_normalizer
-from email.header import decode_header
+import tempfile
+from email.utils import parseaddr, getaddresses, parsedate_to_datetime
 from datetime import datetime
-from email.utils import getaddresses, parsedate_to_datetime
-from dateutil import parser as date_parser
-import uuid
-import traceback
 
-# Configure logging only once
-if not logging.getLogger().handlers:
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s')
-
-def setup_logging(verbose=False, quiet=False):
-    if quiet:
-        logging.getLogger().setLevel(logging.ERROR)
-    elif verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-    else:
-        logging.getLogger().setLevel(logging.INFO)
-
-def sanitize_filename(filename, max_length=100):
-    """Sanitize a filename by replacing invalid characters and truncating to a safe length."""
-    clean = re.sub(r'[\\/:*?"<>|]', '_', filename)
-    if len(clean) > max_length:
-        clean = clean[:max_length]
-    return clean
-
-def decode_mime_header(value):
-    """Decode an RFC-2047 encoded header into a readable string."""
-    if not value:
-        return ""
-    parts = decode_header(value)
-    decoded = []
-    for text, charset in parts:
-        if isinstance(text, bytes):
-            try:
-                decoded.append(text.decode(charset or 'utf-8', errors='ignore'))
-            except (LookupError, TypeError):
-                decoded.append(text.decode('latin-1', errors='ignore'))
-        else:
-            decoded.append(text)
-    return ''.join(decoded)
+def sanitize_filename(filename):
+    """Sanitizes the filename by replacing invalid characters and truncating if necessary."""
+    if not filename:
+        return 'attachment.bin'
+    invalid_chars = r'\/:*?"<>|'
+    for char in invalid_chars:
+        filename = filename.replace(char, '_')
+    filename = filename.strip().lstrip('.')
+    if not filename:
+        filename = 'attachment'
+    max_length = 255
+    if len(filename) > max_length:
+        name, ext = os.path.splitext(filename)
+        name = name[:max_length - len(ext)] if ext else name[:max_length]
+        filename = name + ext
+    return filename
 
 def extract_emails_from_mbox(mbox_file):
-    """Yield email messages from an MBOX file one at a time."""
-    try:
-        mbox = mailbox.mbox(mbox_file)
-    except (OSError, mailbox.NoSuchMailbox, mailbox.Error) as e:
-        logging.error(f"Failed to open MBOX file '{mbox_file}': {e}")
-        raise
+    """Extracts emails from an mbox file, retaining all metadata and folder labels."""
+    mbox = mailbox.mbox(mbox_file)
+    emails = []
     for message in mbox:
-        yield message
-
-def find_or_add_pst(namespace, pst_path):
-    """Locate an existing PST or add a new one in Outlook, handling locked files."""
-    pst_name = os.path.basename(pst_path)
-    for store in namespace.Stores:
-        if store.FilePath and os.path.basename(store.FilePath).lower() == pst_name.lower():
-            logging.info(f"Using existing PST: {pst_path}")
-            return store.GetRootFolder()
-    logging.info(f"Creating new PST: {pst_path}")
-    try:
-        namespace.AddStoreEx(pst_path, constants.olStoreUnicode)
-    except pywintypes.com_error as e:
-        logging.error(f"Failed to add PST (possibly locked or in use): {e}")
-        logging.info("Please ensure the PST file is not open in Outlook or another application.")
-        raise
-    for store in namespace.Stores:
-        if store.FilePath and os.path.basename(store.FilePath).lower() == pst_name.lower():
-            return store.GetRootFolder()
-    raise RuntimeError(f"Could not mount PST: {pst_path}")
+        email_data = {
+            'raw': message.as_string(),
+            'labels': message.get('X-Gmail-Labels', '').split(',') if message.get('X-Gmail-Labels') else ['Inbox']
+        }
+        emails.append(email_data)
+    return emails
 
 def get_folder_by_name(parent_folder, folder_name):
-    """Find or create a folder in the PST by name, with sanitized name."""
-    name = sanitize_filename(folder_name)
+    """Finds or creates a subfolder by name within the parent folder."""
     for folder in parent_folder.Folders:
-        if folder.Name.lower() == name.lower():
+        if folder.Name == folder_name:
             return folder
-    return parent_folder.Folders.Add(name)
+    return parent_folder.Folders.Add(folder_name)
 
-def extract_bodies(msg, fallback_encoding='utf-8'):
-    """Extract all HTML and plain text parts from an email message, including nested parts."""
-    html_bodies = []
-    plain_bodies = []
-    for part in msg.walk():
-        ctype = part.get_content_type()
-        if ctype == 'text/html':
-            raw = part.get_payload(decode=True) or b''
-            text = decode_text(raw, fallback_encoding)
-            if text:
-                html_bodies.append(text)
-        elif ctype == 'text/plain':
-            raw = part.get_payload(decode=True) or b''
-            text = decode_text(raw, fallback_encoding)
-            if text:
-                plain_bodies.append(text)
-    return html_bodies, plain_bodies
-
-def decode_text(raw, fallback_encoding):
-    """Decode raw bytes to text using charset_normalizer or fallback encoding."""
-    detected = charset_normalizer.from_bytes(raw).best()
-    if detected:
-        try:
-            return detected.output().decode('utf-8', errors='ignore')
-        except Exception:
-            pass
-    try:
-        return raw.decode(fallback_encoding, errors='ignore')
-    except (LookupError, TypeError):
-        return raw.decode('latin-1', errors='ignore')
-
-def format_address_list(msg, header_name):
-    """Convert email addresses from a header into a comma-separated string."""
-    addrs = getaddresses(msg.get_all(header_name, []))
-    return ', '.join(addr for _, addr in addrs)
-
-def set_headers(mail, msg):
-    """Set email headers like subject, sender, and recipients in Outlook."""
-    mail.Subject = decode_mime_header(msg.get('Subject')) or "No Subject"
-    mail.SenderEmailAddress = decode_mime_header(msg.get('From'))
-    mail.To = format_address_list(msg, 'To')
-    mail.CC = format_address_list(msg, 'Cc')
-    date_hdr = msg.get('Date')
-    if date_hdr:
-        try:
-            mail.SentOn = parsedate_to_datetime(date_hdr)
-        except Exception:
-            try:
-                mail.SentOn = date_parser.parse(date_hdr)
-            except Exception:
-                logging.warning(f"Could not parse date '{date_hdr}'. Using current time.")
-                mail.SentOn = datetime.now()
-    else:
-        mail.SentOn = datetime.now()
-
-def add_body(mail, msg, fallback_encoding='utf-8'):
-    """Add the email body to the Outlook item, preferring HTML if available."""
-    html_bodies, plain_bodies = extract_bodies(msg, fallback_encoding)
-    if html_bodies:
-        mail.HTMLBody = '\n'.join(html_bodies)
-        return 'HTML'
-    if plain_bodies:
-        mail.Body = '\n'.join(plain_bodies)
-        return 'Plain'
-    mail.Body = "No body content"
-    return 'None'
-
-def add_attachments(mail, msg, temp_dir):
-    """Add attachments to the email, keeping temp files until email is saved."""
-    temp_files = []
-    counter = 1
-    for part in msg.walk():
-        if part.get_content_maintype() == 'multipart':
-            continue
-        if part.get('Content-Disposition') is None:
-            continue
-        filename = part.get_filename()
-        if not filename:
-            filename = f"attachment_{counter}.dat"
-            counter += 1
-        else:
-            filename = decode_mime_header(filename)
-        clean = sanitize_filename(filename)
-        unique_id = uuid.uuid4().hex[:4]  # Shortened to 4 chars
-        clean = f"{clean}_{unique_id}"
-        path = os.path.join(temp_dir, clean)
-        try:
-            data = part.get_payload(decode=True)
-            with open(path, 'wb') as f:
-                f.write(data)
-            mail.Attachments.Add(path)
-            temp_files.append(path)
-        except OSError as e:
-            logging.error(f"Failed to handle attachment '{clean}': {e}")
-    return temp_files
-
-def import_emails_to_outlook(emails_iter, pst_file, folder_name, dry_run, temp_dir, profile=None, fallback_encoding='utf-8'):
-    """Import MBOX emails into an Outlook PST file."""
-    total = 0
-    failures = 0
-    outlook = None
-    namespace = None
+def check_outlook_accessible():
+    """Checks if Outlook is running and accessible."""
     try:
         outlook = win32com.client.Dispatch("Outlook.Application")
         namespace = outlook.GetNamespace("MAPI")
-        if profile:
-            namespace.Logon(profile)
-        root = find_or_add_pst(namespace, pst_file)
-        target_folder = get_folder_by_name(root, folder_name)
-        logging.info(f"Importing to folder: {target_folder.Name} in PST: {pst_file}")
-
-        for idx, msg in enumerate(emails_iter, start=1):
-            total += 1
-            try:
-                if dry_run:
-                    attachments = [p.get_filename() for p in msg.walk() if p.get_filename()]
-                    body_type = 'HTML' if any(p.get_content_type() == 'text/html' for p in msg.walk()) else 'Plain'
-                    logging.info(f"[Dry-run #{idx}] Subject: {decode_mime_header(msg.get('Subject'))}, Body: {body_type}, Attachments: {len(attachments)}, Target Folder: {target_folder.Name}")
-                    continue
-
-                if idx % 10 == 0:
-                    logging.info(f"Processed {idx} messages...")
-
-                temp_files = []
-                mail = outlook.CreateItem(0)  # Create a new email item
-                set_headers(mail, msg)
-                add_body(mail, msg, fallback_encoding)
-                temp_files = add_attachments(mail, msg, temp_dir)
-                mail.Save()
-                mail.Move(target_folder)
-                for temp_file in temp_files:
-                    try:
-                        os.remove(temp_file)
-                    except OSError:
-                        pass
-            except Exception as e:
-                failures += 1
-                logging.error(f"Email #{idx} failed: {e}")
-                logging.debug(traceback.format_exc())
-
-        logging.info(f"Completed: {total - failures}/{total} emails imported, {failures} failed.")
-    except KeyboardInterrupt:
-        logging.error("Import cancelled by user.")
-        sys.exit(1)
-    finally:
-        try:
-            if namespace:
-                namespace.Logoff()
-            if outlook:
-                outlook.Quit()
-        except Exception as e:
-            logging.error(f"Failed to cleanly shut down Outlook: {e}")
-
-def check_disk_space(path, mbox_size, multiplier=10):
-    """Ensure sufficient disk space is available for the conversion."""
-    total, used, free = shutil.disk_usage(path)
-    required = mbox_size * multiplier
-    if free < required:
-        logging.error(f"Insufficient disk space at {path}. Need: {required // (1024*1024)}MB, Free: {free // (1024*1024)}MB.")
-        sys.exit(1)
-
-def main():
-    """Parse arguments and run the MBOX to PST conversion."""
-    parser = argparse.ArgumentParser(description="Convert an MBOX file to an Outlook PST.")
-    parser.add_argument("mbox", help="Path to the .mbox file")
-    parser.add_argument("--pst", "-p", help="Path to output PST file (default: <mbox_dir>/emails.pst)")
-    parser.add_argument("--folder", "-f", default="Inbox", help="Folder name in PST (default: Inbox)")
-    parser.add_argument("--dry-run", action="store_true", help="Preview actions without importing")
-    parser.add_argument("--profile", help="Outlook profile name (optional)")
-    parser.add_argument("--temp-dir", help="Custom temporary directory (optional)")
-    parser.add_argument("--fallback-encoding", default="utf-8", help="Encoding if detection fails (default: utf-8)")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Suppress non-error logs")
-    parser.add_argument("--space-multiplier", type=int, default=10, help="Disk space multiplier (default: 10)")
-    args = parser.parse_args()
-
-    setup_logging(args.verbose, args.quiet)
-
-    if not os.path.isfile(args.mbox):
-        logging.error(f"MBOX file not found: {args.mbox}")
-        sys.exit(1)
-
-    pst = args.pst or os.path.join(os.path.dirname(args.mbox), "emails.pst")
-    mbox_size = os.path.getsize(args.mbox)
-    check_disk_space(os.path.dirname(pst), mbox_size, args.space_multiplier)
-
-    temp_dir = args.temp_dir or tempfile.mkdtemp(prefix="mbox2pst_")
-    try:
-        emails = extract_emails_from_mbox(args.mbox)
-        import_emails_to_outlook(emails, pst, args.folder, args.dry_run, temp_dir, args.profile, args.fallback_encoding)
+        namespace.Folders  # Test access
+        return True
     except Exception as e:
-        logging.error(f"Conversion failed: {e}")
+        return False
+
+def import_emails_to_outlook(emails, pst_file):
+    """Imports emails into an Outlook PST file with progress tracking and folder structure."""
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+    except Exception as e:
+        print(f"Error: Failed to initialize Outlook. Ensure Outlook is installed and running. Details: {str(e)[:100]}")
         sys.exit(1)
+
+    try:
+        namespace = outlook.GetNamespace("MAPI")
+        namespace.AddStoreEx(pst_file, 3)  # 3 = olStoreUnicode
+        pst_folder = namespace.Folders.GetLast()
+    except Exception as e:
+        print(f"Error: Failed to add PST store. Check permissions and disk access. Details: {str(e)[:100]}")
+        sys.exit(1)
+
+    total_emails = len(emails)
+    processed_emails = 0
+    total_attachments = 0
+
+    print(f"\n{'='*50}")
+    print(f"Starting import of {total_emails} emails")
+    print(f"{'='*50}\n")
+
+    try:
+        for idx, email_data in enumerate(emails, 1):
+            try:
+                raw_email = email_data['raw']
+                labels = email_data['labels']
+                msg = email.message_from_string(raw_email)
+
+                # Determine folder (use first label, default to Inbox)
+                folder_name = labels[0].strip() if labels and labels[0].strip() else 'Inbox'
+                target_folder = get_folder_by_name(pst_folder, folder_name)
+
+                mail_item = outlook.CreateItem(0)  # 0 = olMailItem
+                mail_item.Subject = msg.get('Subject', '')
+
+                # Set To, CC, BCC
+                for header in ['To', 'CC', 'BCC']:
+                    value = msg.get(header, '')
+                    if value:
+                        addresses = getaddresses([value])
+                        formatted = '; '.join([email.utils.formataddr((name, addr)) for name, addr in addresses])
+                        setattr(mail_item, header, formatted)
+
+                # Set From using PropertyAccessor
+                from_header = msg.get('From')
+                if from_header:
+                    name, addr = parseaddr(from_header)
+                    pa = mail_item.PropertyAccessor
+                    if name:
+                        pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x0C1A001E", name)
+                    if addr:
+                        pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x0C1F001E", addr)
+
+                # Set Date using PropertyAccessor
+                date_header = msg.get('Date')
+                if date_header:
+                    try:
+                        parsed_date = parsedate_to_datetime(date_header)
+                        pa = mail_item.PropertyAccessor
+                        pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x0E060040", parsed_date)
+                        pa.SetProperty("http://schemas.microsoft.com/mapi/proptag/0x00390040", parsed_date)
+                    except Exception as e:
+                        print(f"\nError setting date for email {idx}: {e}")
+
+                # Process body and attachments
+                text_body, html_body = None, None
+                email_attachments = 0
+                temp_files = []
+                try:
+                    for part in msg.walk():
+                        if part.is_multipart():
+                            continue
+                        content_type = part.get_content_type()
+                        disposition = str(part.get('Content-Disposition', '')).lower()
+                        filename = part.get_filename()
+
+                        # Handle attachments
+                        if filename or 'attachment' in disposition:
+                            data = part.get_payload(decode=True)
+                            if not data:
+                                continue
+                            sanitized = sanitize_filename(filename) if filename else 'attachment.bin'
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                                    temp_file.write(data)
+                                    temp_path = temp_file.name
+                                    temp_files.append(temp_path)
+                                mail_item.Attachments.Add(temp_path, 1, 0, sanitized)
+                                email_attachments += 1
+                                total_attachments += 1
+                            except Exception as e:
+                                print(f"\nFailed to attach {sanitized} in email {idx}: {e}")
+                        else:
+                            # Handle body content
+                            data = part.get_payload(decode=True)
+                            charset = part.get_content_charset('utf-8')
+                            try:
+                                decoded = data.decode(charset, errors='ignore') if data else ''
+                            except (LookupError, UnicodeDecodeError):
+                                decoded = data.decode('utf-8', errors='ignore') if data else ''
+                            if content_type == 'text/plain':
+                                text_body = decoded
+                            elif content_type == 'text/html':
+                                html_body = decoded
+                finally:
+                    # Clean up temporary files
+                    for temp_path in temp_files:
+                        try:
+                            if os.path.exists(temp_path):
+                                os.unlink(temp_path)
+                        except Exception as e:
+                            print(f"\nFailed to clean up temporary file {temp_path}: {e}")
+
+                if text_body:
+                    mail_item.Body = text_body
+                if html_body:
+                    mail_item.HTMLBody = html_body
+
+                # Update progress display
+                percent_complete = (idx / total_emails) * 100
+                sys.stdout.write(
+                    f"\rProcessing: [{('#' * int(percent_complete//2)).ljust(50)}] "
+                    f"{percent_complete:.1f}% ({idx}/{total_emails}) | "
+                    f"Attachments: {total_attachments}"
+                )
+                sys.stdout.flush()
+
+                mail_item.Save()
+                mail_item.Move(target_folder)
+                processed_emails += 1
+
+            except Exception as e:
+                print(f"\nError processing email {idx}: {str(e)[:100]}")
+
+        # Final progress update
+        sys.stdout.write(
+            f"\rProcessing: [{'#'*50}] 100.0% ({total_emails}/{total_emails}) | "
+            f"Attachments: {total_attachments}"
+        )
+        sys.stdout.flush()
+
     finally:
-        if not args.temp_dir:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        print(f"\n\n{'='*50}")
+        print(f"Processed: {processed_emails}/{total_emails} emails")
+        print(f"Attachments saved: {total_attachments}")
+        print(f"PST file location: {os.path.abspath(pst_file)}")
+        print(f"{'='*50}")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 2:
+        print("Usage: python convert.py <mbox_file>")
+        sys.exit(1)
+
+    mbox_file = sys.argv[1]
+    if not os.path.exists(mbox_file):
+        print(f"Error: File '{mbox_file}' does not exist.")
+        sys.exit(1)
+
+    pst_file = os.path.join(os.path.dirname(mbox_file), 'emails.pst')
+
+    # Check if Outlook is accessible
+    if not check_outlook_accessible():
+        print("Error: Outlook is not running or accessible. Please start Outlook and try again.")
+        sys.exit(1)
+
+    # Extract emails and estimate size
+    emails = extract_emails_from_mbox(mbox_file)
+    total_size = 0
+    for email_data in emails:
+        raw_email = email_data['raw']
+        msg = email.message_from_string(raw_email)
+        total_size += len(raw_email)
+        for part in msg.walk():
+            if 'attachment' in str(part.get('Content-Disposition', '')).lower() or part.get_filename():
+                data = part.get_payload(decode=True)
+                if data:
+                    total_size += len(data)
+    total_size = int(total_size * 1.5)  # Adjust multiplier for overhead
+
+    pst_dir = os.path.dirname(pst_file)
+    try:
+        disk_usage = shutil.disk_usage(pst_dir)
+    except FileNotFoundError:
+        print(f"Directory {pst_dir} does not exist.")
+        sys.exit(1)
+
+    # Check PST size limit (50GB default for modern Outlook)
+    pst_size_limit = 50 * 1024 * 1024 * 1024  # 50GB in bytes
+    if total_size > pst_size_limit:
+        print(f"Warning: Estimated PST size ({total_size/1024/1024/1024:.1f} GB) exceeds Outlook's default limit (50 GB). Import may fail.")
+        sys.exit(1)
+
+    print(f"\n{'='*50}")
+    print(f"Found {len(emails)} emails in {os.path.basename(mbox_file)}")
+    print(f"Estimated PST size: {total_size/1024/1024:.1f} MB")
+    print(f"Available space: {disk_usage.free/1024/1024:.1f} MB")
+    print(f"{'='*50}")
+
+    if disk_usage.free < total_size:
+        print(f"Error: Insufficient disk space. Required: {total_size/1024/1024:.1f} MB, Available: {disk_usage.free/1024/1024:.1f} MB")
+        sys.exit(1)
+
+    import_emails_to_outlook(emails, pst_file)

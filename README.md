@@ -1,108 +1,79 @@
-# MBOX to PST Converter
+#  MBOX to PST Converter
 
-**Effortlessly convert MBOX files to PST format with this robust Python script for Windows.**
+**Reliable. Efficient. Ready for enterprise use.**
 
-This open-source tool streamlines the conversion of MBOX email files to PST format, compatible with Microsoft Outlook. Designed for both individual users and organizations, it offers advanced features to ensure reliable email migration and archiving, trusted by clients worldwide.
+This powerful open-source Python tool enables seamless conversion of MBOX email files to PST format—fully compatible with Microsoft Outlook. Designed with robustness and flexibility in mind, it's ideal for individuals, system administrators, and organizations migrating or archiving mailboxes.
 
-## Features
+##  Key Features
 
-- **Seamless Conversion**: Convert MBOX files to PST with a single command.
-- **Metadata Preservation**: Retains sender, recipient, dates, and other email metadata.
-- **Attachment Support**: Preserves email attachments with sanitized filenames.
-- **Dry-Run Mode**: Preview conversion details without modifying data.
-- **Customizable Options**: Specify PST file path, folder name, Outlook profile, and temporary directory.
-- **Robust Error Handling**: Continues processing despite individual email failures, with detailed logging.
-- **Disk Space Check**: Ensures sufficient disk space before conversion.
-- **Flexible Encoding**: Handles various email encodings with fallback support.
-- **Open Source**: Free to use, modify, and distribute.
+-  **Full Metadata Extraction** – Retains subject, sender, recipients, and timestamps  
+-  **Preserves Folder Hierarchies** – Converts Gmail label structures to Outlook folders  
+-  **Attachment Support** – Handles embedded files with smart filename sanitization  
+-  **Progress Indicator** – Displays real-time conversion progress  
+-  **Disk & PST Size Checks** – Prevents conversion issues due to space limits  
+-  **Resilient Outlook Integration** – Built-in error handling for stability  
+-  **Auto Cleanup** – Deletes temporary files post-conversion  
+-  **Dual Email Format Support** – Maintains both HTML and plain text bodies  
 
-## Installation
+##  Installation & Setup (Windows)
 
-Follow these steps to set up and use the MBOX to PST Converter on your Windows machine:
+### 1. Prerequisites
 
-1. **Set Up Outlook**:
+- **Microsoft Outlook** must be installed and configured and when opening the Outlook run it as administrator.  
+- **Python**: Download and install from [python.org](https://www.python.org/downloads/)
 
-   - Ensure Microsoft Outlook is installed and configured on your device.
+### 2. Install Required Python Packages
 
-2. **Install Python**:
+```bash
+pip install pywin32 charset-normalizer python-dateutil
+```
 
-   - Download and install the latest version of Python from the official Python website.
+### 3. Clone the Repository
 
-3. **Install Dependencies**:
+```bash
+git clone https://github.com/BloodBlinker/MBOX_To_PST.git
+cd MBOX_To_PST
+```
 
-   - Open a terminal and install required packages:
+### 4. Prepare for Conversion
 
-     ```bash
-     pip install pywin32 charset-normalizer python-dateutil
-     ```
+- Place your `.mbox` file in an easily accessible folder
 
-4. **Clone the Repository**:
+### 5. Run the Converter
 
-   - Clone this repository to your local machine:
+```bash
+python convert.py path/to/your_file.mbox
+```
 
-     ```bash
-     git clone https://github.com/BloodBlinker/MBOX_To_PST.git
-     ```
+> Replace `path/to/your_file.mbox` with the actual file path.
 
-5. **Navigate to the Project Directory**:
+### 6. After Conversion
 
-   - Change into the project directory:
+- Move the generated `.pst` file to your preferred location  
+- If converting multiple times using the same Outlook profile:
+  - Open Outlook
+  - Navigate to `File > Account Settings > Account Settings`
+  - Under the **Data Files** tab, remove the previous PST to avoid duplication or conflict
 
-     ```bash
-     cd MBOX_To_PST
-     ```
+##  Development Notes
 
-6. **Prepare Your MBOX File**:
+- **Legacy Code**: The original script (`original_convert.py`) is preserved for historical reference  
+- **Enhanced Version**: Use `mbox_to_pst.py` for improved performance and error handling  
+- **Test First**: Always test with a sample file before running on production data
 
-   - Place the MBOX file you wish to convert in a convenient location.
+##  Contributing & Support
 
-7. **Run the Conversion**:
-
-   - Execute the conversion with the following command:
-
-     ```bash
-     python convert.py your_mbox_file.mbox
-     ```
-
-   - Replace `your_mbox_file.mbox` with the path to your MBOX file.
-
-   - Optional arguments:
-
-     - `--pst <path>`: Specify the output PST file path (default: `emails.pst` in MBOX directory).
-     - `--folder <name>`: Set the target folder in the PST (default: `Inbox`).
-     - `--dry-run`: Preview actions without importing.
-     - `--profile <name>`: Use a specific Outlook profile.
-     - `--temp-dir <path>`: Specify a custom temporary directory.
-     - `--verbose`: Enable detailed debug logging.
-     - `--quiet`: Suppress non-error logs.
-     - `--fallback-encoding <encoding>`: Set fallback encoding (default: `utf-8`).
-     - `--space-multiplier <number>`: Adjust disk space requirement (default: 10).
-
-   Example with options:
-
-   ```bash
-   python convert.py sample.mbox --pst output.pst --folder "Archive" --dry-run --verbose
-   ```
-
-8. **Post-Conversion Steps**:
-
-   - After conversion, move the generated PST file to your desired location.
-   - If running the script again with the same Outlook account:
-     - Open Outlook.
-     - Go to `File > Account Settings > Account Settings`.
-     - Under the `Data Files` tab, remove the previously created PST file to avoid conflicts.
-
-## Important Notes
-
-- **Original Code Preservation**: The original version of the converter is preserved as `original_convert.py` for reference and testing. The latest, enhanced version is in `convert.py`.
-- **Testing the New Version**: We recommend testing `convert.py` with a sample MBOX file before removing the original code.
-- **International Clients**: This tool supports diverse email formats and encodings, ensuring compatibility for global users.
-- **Logging**: Detailed logs are generated to help troubleshoot issues, especially useful in verbose mode (`--verbose`).
-
-## Thank You for Using MBOX to PST Converter
-
-We value your trust in our tool. For questions, support, or contributions, please open an issue in this repository or contact us directly.
+We welcome feedback, bug reports, and contributions.  
+-  Open an [issue](https://github.com/BloodBlinker/MBOX_To_PST/issues) for help or feature requests  
+-  Fork the project and submit pull requests for improvements
 
 ---
 
-*This project is open source. Feel free to fork the repository and submit pull requests to enhance its functionality.*
+###  Thank You
+
+Thank you for choosing **MBOX to PST Converter**. We’re honored to be part of your email migration journey.
+
+---
+
+> **License**: This project is open-source and licensed under [MIT](LICENSE).  
+> Build with confidence. Fork freely. Contribute proudly.
